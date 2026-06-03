@@ -8,3 +8,4 @@ export {
 } from './auth.service';
 export { prisma, connectDatabase, disconnectDatabase } from './database.service';
 export { meetingService, MeetingService } from './meeting.service';
+export { actionItemService, ActionItemService } from './action-item.service';

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { config } from '@/config';
 import { authRouter } from './auth.routes';
 import { meetingRouter } from './meeting.routes';
+import { actionItemRouter } from './action-item.routes';
 import { sendSuccess } from '@/utils/response';
 
 const router = Router();
@@ -35,5 +36,6 @@ const apiBase = `/api/${config.app.apiVersion}`;
 
 router.use(`${apiBase}/auth`, authRouter);
 router.use(`${apiBase}/meetings`, meetingRouter);
+router.use(`${apiBase}/action-items`, actionItemRouter);
 
 export { router as apiRouter };

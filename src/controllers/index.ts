@@ -13,3 +13,12 @@ export {
   GetMeetingsQuerySchema,
   MeetingParamsSchema,
 } from './meeting.controller';
+
+export {
+  actionItemController,
+  ActionItemController,
+  CreateActionItemSchema,
+  UpdateActionItemStatusSchema,
+  GetActionItemsQuerySchema,
+  ActionItemParamsSchema,
+} from './action-item.controller';
