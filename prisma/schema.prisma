@@ -1,0 +1,302 @@
+// =============================================================================
+//  Meeting Intelligence Service — Prisma Schema
+//  Provider  : PostgreSQL
+//  Generator : prisma-client-js
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+// ActionItemStatus lives here instead of app-layer constants so the constraint
+// is enforced at the database level; PostgreSQL creates a CHECK constraint for
+// every Prisma enum column, making invalid states impossible to persist.
+enum ActionItemStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+// ReminderChannel tracks HOW a reminder was dispatched. Keeping it as an enum
+// rather than a free string prevents typos and enables filtered queries
+// (e.g. "show me all EMAIL reminders that bounced").
+enum ReminderChannel {
+  EMAIL
+  SLACK
+  WEBHOOK
+  SMS
+}
+
+// ReminderStatus mirrors the delivery receipt from the sending provider.
+// SENT = handed off to provider; DELIVERED = provider confirmed delivery;
+// FAILED = provider reported an error or we timed out.
+enum ReminderDeliveryStatus {
+  SENT
+  DELIVERED
+  FAILED
+}
+
+// =============================================================================
+//  MODEL: User
+// =============================================================================
+//
+//  Design decisions
+//  ────────────────
+//  • id uses uuid() so PKs are globally unique, unguessable, and safe to expose
+//    in URLs without leaking row-count information (vs. auto-increment integers).
+//  • passwordHash stores only the bcrypt/argon2 digest — never the plaintext.
+//  • email is marked @unique; PostgreSQL automatically creates a B-tree index
+//    for UNIQUE constraints, so no separate @@index is needed.
+//  • createdAt is intentionally NOT @updatedAt — user creation time is
+//    immutable audit data. A separate `updatedAt` is omitted because the only
+//    mutable user fields are email/name and are tracked by application-layer
+//    audit logs in real systems.
+//  • @@map("users") maps to snake_case table names — standard PostgreSQL
+//    convention and required if you ever query the DB directly via psql/DBeaver.
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // ── Relations ──────────────────────────────────────────────────────────
+  // Named relation "CreatedByUser" avoids ambiguity: User can appear on a
+  // Meeting both as createdBy AND as a participant (via participants[]).
+  meetings    Meeting[]     @relation("CreatedByUser")
+  actionItems ActionItem[]  @relation("AssigneeActionItems")
+
+  @@map("users")
+}
+
+// =============================================================================
+//  MODEL: Meeting
+// =============================================================================
+//
+//  Design decisions
+//  ────────────────
+//  • participants is stored as String[] (PostgreSQL text[] array) rather than a
+//    join table. This is intentional for this service:
+//      - The field stores raw names or email strings from the meeting invite /
+//        calendar integration, NOT foreign-key references. Participants often
+//        include external attendees who are not system users.
+//      - If you later need to link participants to User rows, add a separate
+//        MeetingParticipant join table without removing this column.
+//  • createdBy is a FK to User. Using @relation("CreatedByUser") disambiguates
+//    from the participants array.
+//  • meetingDate stores the calendar-scheduled time. It is indexed because
+//    the most common filter is date-range dashboards (meetings this week, etc.).
+//  • createdAt + updatedAt are both present because Meeting records are edited
+//    (title changes, rescheduling) and we need to detect stale caches.
+//  • @@index([createdBy]) — dashboards always filter "my meetings".
+//  • @@index([meetingDate]) — date-range queries are the primary list view.
+
+model Meeting {
+  id          String   @id @default(uuid())
+  title       String
+  participants String[] // free-form names/emails from calendar invite
+  meetingDate DateTime @map("meeting_date")
+  createdBy   String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // ── Relations ──────────────────────────────────────────────────────────
+  creator       User             @relation("CreatedByUser", fields: [createdBy], references: [id])
+  transcriptLines TranscriptLine[]
+  analysis      MeetingAnalysis? // 0 or 1 — populated after AI processing
+  actionItems   ActionItem[]
+
+  @@index([createdBy])
+  @@index([meetingDate])
+  @@map("meetings")
+}
+
+// =============================================================================
+//  MODEL: TranscriptLine
+// =============================================================================
+//
+//  Design decisions
+//  ────────────────
+//  • Each row is one utterance (one turn of speech), NOT a whole transcript
+//    blob. This gives fine-grained query capability: "show me everything
+//    Alice said", "find lines containing 'budget'", etc.
+//  • order: Int captures the sequential position of the line within the
+//    meeting. Without it, sorting by `timestamp` alone is fragile when two
+//    speakers overlap (same millisecond). order is the authoritative sort key.
+//  • timestamp: DateTime stores the wall-clock moment the utterance started,
+//    useful for syncing with a recording player.
+//  • speaker: String (not a FK) — matches the participants[] design on Meeting.
+//    Diarisation systems return speaker labels ("Speaker 1", "Alice") without
+//    necessarily linking to a user account.
+//  • @@index([meetingId, order]) — composite index is the canonical access
+//    pattern: "give me all lines for meeting X in order". The composite is
+//    more efficient than two separate indexes for this query shape.
+//  • @@index([speaker]) — enables "all lines by Alice across all meetings"
+//    dashboard queries.
+//  • onDelete: Cascade — transcript lines have no meaning without their parent
+//    meeting; they are deleted automatically when the meeting is deleted.
+
+model TranscriptLine {
+  id        String   @id @default(uuid())
+  meetingId String   @map("meeting_id")
+  timestamp DateTime // wall-clock start time of this utterance
+  speaker   String   // diarised speaker label or resolved name
+  text      String   @db.Text // full utterance — @db.Text allows >1 GB in PG
+  order     Int      // 0-based sequential position within the meeting
+
+  // ── Relations ──────────────────────────────────────────────────────────
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId, order]) // primary: paginate lines for a meeting in order
+  @@index([speaker])          // secondary: speaker-level analytics
+  @@map("transcript_lines")
+}
+
+// =============================================================================
+//  MODEL: MeetingAnalysis
+// =============================================================================
+//
+//  Design decisions
+//  ────────────────
+//  • meetingId is @unique — enforces a strict 1-to-1 with Meeting at the DB
+//    level. There is exactly one AI analysis per meeting.
+//  • summary, actionItemsRaw, decisions, followups are all Json columns.
+//    Rationale:
+//      - The AI output schema evolves rapidly (new fields, nested objects).
+//        A rigid SQL schema would require a migration for every prompt change.
+//      - PostgreSQL's jsonb type (which Prisma's Json maps to) is fully
+//        indexed, queryable with -> / ->>, and has great tooling.
+//      - actionItemsRaw stores the LLM's raw output before it is normalised
+//        into ActionItem rows. This is the "source of truth" for re-processing.
+//        The structured ActionItem rows are derived from it.
+//      - decisions and followups are kept separate from actionItemsRaw
+//        because they serve different UI components and query patterns.
+//  • createdAt only (no updatedAt) — analysis is immutable once written.
+//    If you need to re-run AI, insert a new record (and cascade-delete the old
+//    one via the @unique constraint + application logic). This gives you a
+//    natural audit trail of analysis runs.
+//  • No index on meetingId needed — the @unique constraint creates one
+//    automatically in PostgreSQL.
+
+model MeetingAnalysis {
+  id             String   @id @default(uuid())
+  meetingId      String   @unique @map("meeting_id") // unique enforces 1-to-1
+  summary        Json     // { text: string, sentiment: string, topics: string[] }
+  actionItemsRaw Json     @map("action_items_raw") // raw LLM extraction output
+  decisions      Json     // [{ decision: string, madeBy: string, timestamp }]
+  followups      Json     // [{ topic: string, owner: string, deadline }]
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // ── Relations ──────────────────────────────────────────────────────────
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@map("meeting_analyses")
+}
+
+// =============================================================================
+//  MODEL: ActionItem
+// =============================================================================
+//
+//  Design decisions
+//  ────────────────
+//  • task: String — the human-readable description of what needs to be done.
+//  • assignee: String (not FK) — matches the loose participant model; the
+//    assignee may be external. If you resolve them to a User, populate the
+//    optional assigneeUserId FK instead of removing assignee.
+//  • assigneeUserId: optional FK to User — populated when the assignee is a
+//    registered system user, enabling user-scoped action-item dashboards.
+//    Named relation "AssigneeActionItems" to avoid collision with other User
+//    relations.
+//  • dueDate: optional DateTime — some action items captured from meetings
+//    have no explicit deadline ("follow up at some point").
+//  • status: ActionItemStatus enum — enforced at DB level via PG CHECK
+//    constraint; three states cover the full lifecycle without over-engineering.
+//  • citations: Json — stores an array of TranscriptLine references that
+//    justify this action item, e.g.:
+//      [{ lineId: "...", text: "...", timestamp: "..." }]
+//    Stored as Json rather than a join table because:
+//      1. Citations are read-only after creation.
+//      2. We want to snapshot the line text at time of extraction — the
+//         transcript may be corrected later but citations should stay stable.
+//  • @@index([meetingId]) — "all action items for meeting X" is the primary
+//    list view.
+//  • @@index([assigneeUserId]) — "all action items assigned to user Y" drives
+//    personal dashboards and reminder targeting.
+//  • @@index([status]) — "all PENDING items" for the reminder scheduler.
+//  • @@index([dueDate]) — scheduler queries "items due before NOW()".
+
+model ActionItem {
+  id              String           @id @default(uuid())
+  meetingId       String           @map("meeting_id")
+  task            String           @db.Text
+  assignee        String           // free-form name/email from transcript
+  assigneeUserId  String?          @map("assignee_user_id") // resolved FK, optional
+  dueDate         DateTime?        @map("due_date")
+  status          ActionItemStatus @default(PENDING)
+  citations       Json             // [{ lineId, text, timestamp }] snapshot
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  // ── Relations ──────────────────────────────────────────────────────────
+  meeting       Meeting       @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  assigneeUser  User?         @relation("AssigneeActionItems", fields: [assigneeUserId], references: [id])
+  reminderLogs  ReminderLog[]
+
+  @@index([meetingId])
+  @@index([assigneeUserId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("action_items")
+}
+
+// =============================================================================
+//  MODEL: ReminderLog
+// =============================================================================
+//
+//  Design decisions
+//  ────────────────
+//  • ReminderLog is an append-only audit log — rows are NEVER updated.
+//    This is why there is no updatedAt column. The status of a reminder is set
+//    at insert time and treated as immutable. Re-sends create new rows.
+//  • actionItemId FK with onDelete: Cascade — if an action item is deleted
+//    (e.g. marked as invalid), its reminder history goes with it. This keeps
+//    orphan rows out of the table.
+//  • sentAt: DateTime — when the dispatch was attempted. Separate from
+//    createdAt by design: a row could be created (queued) before the actual
+//    network send happens.
+//  • recipient: String — the destination address (email, Slack user ID, phone
+//    number). Stored as a string to accommodate all channel types uniformly.
+//  • channel: ReminderChannel enum — allows filtering "show me all failed
+//    Slack reminders" for debugging.
+//  • status: ReminderDeliveryStatus enum — SENT/DELIVERED/FAILED gives
+//    enough resolution for a retry scheduler without over-engineering.
+//  • @@index([actionItemId]) — "all reminders sent for action item X" is the
+//    primary access pattern for the detail view and retry logic.
+//  • @@index([sentAt]) — time-range queries for ops dashboards ("reminders
+//    sent today").
+//  • @@index([status]) — retry scheduler queries FAILED rows.
+
+model ReminderLog {
+  id           String                 @id @default(uuid())
+  actionItemId String                 @map("action_item_id")
+  sentAt       DateTime               @map("sent_at")
+  recipient    String                 // email / slack-id / phone depending on channel
+  status       ReminderDeliveryStatus
+  channel      ReminderChannel
+
+  // ── Relations ──────────────────────────────────────────────────────────
+  actionItem ActionItem @relation(fields: [actionItemId], references: [id], onDelete: Cascade)
+
+  @@index([actionItemId])
+  @@index([sentAt])
+  @@index([status])
+  @@map("reminder_logs")
+}
