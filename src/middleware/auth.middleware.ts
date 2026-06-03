@@ -17,7 +17,13 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '@/config';
-import { JwtTokenPayload, JwtUserPayload, UserRole, TraceableRequest, AuthenticatedRequest } from '@/types';
+import {
+  JwtTokenPayload,
+  JwtUserPayload,
+  UserRole,
+  TraceableRequest,
+  AuthenticatedRequest,
+} from '@/types';
 import { UnauthorizedError, ForbiddenError } from '@/utils/errors';
 import { sendError } from '@/utils/response';
 import { logger } from '@/utils/logger';
@@ -26,7 +32,9 @@ import { logger } from '@/utils/logger';
 
 const extractBearerToken = (req: Request): string | null => {
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) return null;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return null;
+  }
   const token = authHeader.slice(7).trim();
   return token.length > 0 ? token : null;
 };
@@ -43,8 +51,8 @@ const verifyAccessToken = (token: string, traceId: string): JwtUserPayload => {
 
   try {
     decoded = jwt.verify(token, config.jwt.secret, {
-      issuer:   config.jwt.issuer,
-      audience: config.jwt.audience as string,
+      issuer: config.jwt.issuer,
+      audience: config.jwt.audience,
     }) as unknown as JwtTokenPayload;
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {
@@ -67,8 +75,8 @@ const verifyAccessToken = (token: string, traceId: string): JwtUserPayload => {
 
   return {
     userId: decoded.userId,
-    email:  decoded.email,
-    role:   decoded.role,
+    email: decoded.email,
+    role: decoded.role,
   };
 };
 
@@ -83,7 +91,7 @@ const verifyAccessToken = (token: string, traceId: string): JwtUserPayload => {
  */
 export const authenticate = (req: Request, res: Response, next: NextFunction): void => {
   const traceableReq = req as TraceableRequest;
-  const traceId      = traceableReq.traceId ?? 'unknown';
+  const traceId = traceableReq.traceId ?? 'unknown';
 
   const token = extractBearerToken(req);
   if (!token) {
@@ -139,9 +147,7 @@ export const requireRole =
 
     if (!roles.includes(authReq.user.role)) {
       next(
-        new ForbiddenError(
-          `This action requires one of the following roles: ${roles.join(', ')}`,
-        ),
+        new ForbiddenError(`This action requires one of the following roles: ${roles.join(', ')}`),
       );
       return;
     }

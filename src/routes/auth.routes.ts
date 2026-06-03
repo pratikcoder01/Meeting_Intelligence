@@ -8,13 +8,9 @@
  * Rate limiting is applied at the app level (authLimiter) for all /auth routes.
  */
 
+/* eslint-disable @typescript-eslint/no-misused-promises */
 import { Router } from 'express';
-import {
-  authController,
-  RegisterSchema,
-  LoginSchema,
-  RefreshTokenSchema,
-} from '@/controllers';
+import { authController, RegisterSchema, LoginSchema, RefreshTokenSchema } from '@/controllers';
 import { validate, authenticate } from '@/middleware';
 
 const router = Router();

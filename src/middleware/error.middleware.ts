@@ -44,8 +44,8 @@ export const notFoundHandler = (req: Request, res: Response): void => {
   const traceId = (req as TraceableRequest).traceId ?? 'unknown';
 
   logger.warn('Route not found', {
-    method:  req.method,
-    path:    req.path,
+    method: req.method,
+    path: req.path,
     traceId,
   });
 
@@ -74,13 +74,15 @@ export const globalErrorHandler = (
 
     const logMeta: Record<string, unknown> = {
       traceId,
-      code:       err.code,
-      message:    err.message,
+      code: err.code,
+      message: err.message,
       statusCode: err.statusCode,
-      method:     req.method,
-      path:       req.path,
+      method: req.method,
+      path: req.path,
     };
-    if (err.details !== undefined) logMeta['errorDetails'] = err.details;
+    if (err.details !== undefined) {
+      logMeta['errorDetails'] = err.details;
+    }
 
     logger[logLevel]('Operational error', logMeta);
 
@@ -93,10 +95,10 @@ export const globalErrorHandler = (
   // debugging but never expose stack traces or internals to clients.
   logger.error('Unexpected error', {
     traceId,
-    message:      err.message,
+    message: err.message,
     errorDetails: err.stack,
-    method:       req.method,
-    path:         req.path,
+    method: req.method,
+    path: req.path,
   });
 
   const clientMessage = config.app.isProduction
@@ -105,5 +107,11 @@ export const globalErrorHandler = (
 
   const details = config.app.isProduction ? undefined : { stack: err.stack };
 
-  sendError(res, StatusCodes.INTERNAL_SERVER_ERROR, 'INTERNAL_SERVER_ERROR', clientMessage, details);
+  sendError(
+    res,
+    StatusCodes.INTERNAL_SERVER_ERROR,
+    'INTERNAL_SERVER_ERROR',
+    clientMessage,
+    details,
+  );
 };

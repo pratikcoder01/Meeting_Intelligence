@@ -47,7 +47,7 @@ export const verifyPassword = async (plaintext: string, hash: string): Promise<b
 
 /** Shared JWT signing options derived from typed config. */
 const baseSignOptions = (): jwt.SignOptions => ({
-  issuer:   config.jwt.issuer,
+  issuer: config.jwt.issuer,
   audience: config.jwt.audience,
 });
 
@@ -61,7 +61,7 @@ const buildTokenPayload = (
   email: string,
   role: UserRole,
 ): Omit<JwtTokenPayload, 'iat' | 'exp' | 'iss' | 'aud'> => ({
-  sub:    userId,
+  sub: userId,
   userId,
   email,
   role,
@@ -95,14 +95,12 @@ export const signRefreshToken = (userId: string, email: string, role: UserRole):
  * Returns `expiresIn` in seconds so clients can schedule silent refresh.
  */
 export const generateTokenPair = (userId: string, email: string, role: UserRole): TokenPair => {
-  const accessToken  = signAccessToken(userId, email, role);
+  const accessToken = signAccessToken(userId, email, role);
   const refreshToken = signRefreshToken(userId, email, role);
 
   // Decode (no verify needed — we just signed it) to read `exp`.
-  const decoded  = jwt.decode(accessToken) as JwtTokenPayload;
-  const expiresIn = decoded.exp
-    ? decoded.exp - Math.floor(Date.now() / 1000)
-    : 900; // fallback: 15 minutes
+  const decoded = jwt.decode(accessToken) as JwtTokenPayload;
+  const expiresIn = decoded.exp ? decoded.exp - Math.floor(Date.now() / 1000) : 900; // fallback: 15 minutes
 
   return { accessToken, refreshToken, expiresIn };
 };
@@ -116,8 +114,8 @@ export const verifyRefreshToken = (token: string): JwtUserPayload => {
 
   try {
     decoded = jwt.verify(token, config.jwt.secret, {
-      issuer:   config.jwt.issuer,
-      audience: config.jwt.audience as string,
+      issuer: config.jwt.issuer,
+      audience: config.jwt.audience,
     }) as unknown as JwtTokenPayload;
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {

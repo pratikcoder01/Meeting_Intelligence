@@ -27,7 +27,9 @@ export const omit = <T extends object, K extends keyof T>(obj: T, keys: K[]): Om
 export const pick = <T extends object, K extends keyof T>(obj: T, keys: K[]): Pick<T, K> => {
   const result = {} as Pick<T, K>;
   for (const key of keys) {
-    if (key in obj) result[key] = obj[key];
+    if (key in obj) {
+      result[key] = obj[key];
+    }
   }
   return result;
 };
@@ -40,7 +42,9 @@ export const clamp = (value: number, min: number, max: number): number =>
 
 /** Safely parse an integer from an unknown string. Returns defaultValue on failure. */
 export const parseIntSafe = (value: string | undefined, defaultValue: number): number => {
-  if (value === undefined) return defaultValue;
+  if (value === undefined) {
+    return defaultValue;
+  }
   const parsed = parseInt(value, 10);
   return isNaN(parsed) ? defaultValue : parsed;
 };
@@ -64,11 +68,17 @@ export const sleep = (ms: number): Promise<void> =>
 
 /** Format a duration in milliseconds to a human-readable string like "2m 5s". */
 export const formatDuration = (ms: number): string => {
-  if (ms < 1000) return `${ms}ms`;
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
   const h = Math.floor(m / 60);
-  if (h > 0) return `${h}h ${m % 60}m ${s % 60}s`;
-  if (m > 0) return `${m}m ${s % 60}s`;
+  if (h > 0) {
+    return `${h}h ${m % 60}m ${s % 60}s`;
+  }
+  if (m > 0) {
+    return `${m}m ${s % 60}s`;
+  }
   return `${s}s`;
 };

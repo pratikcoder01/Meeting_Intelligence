@@ -24,6 +24,13 @@ enum ActionItemStatus {
   COMPLETED
 }
 
+// MeetingStatus captures the lifecycle of a meeting.
+enum MeetingStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
 // ReminderChannel tracks HOW a reminder was dispatched. Keeping it as an enum
 // rather than a free string prevents typos and enables filtered queries
 // (e.g. "show me all EMAIL reminders that bounced").
@@ -105,6 +112,7 @@ model Meeting {
   participants String[] // free-form names/emails from calendar invite
   meetingDate DateTime @map("meeting_date")
   createdBy   String   @map("created_by")
+  status      MeetingStatus @default(SCHEDULED)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -116,6 +124,7 @@ model Meeting {
 
   @@index([createdBy])
   @@index([meetingDate])
+  @@index([status])
   @@map("meetings")
 }
 

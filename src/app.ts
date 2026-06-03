@@ -18,12 +18,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { config } from '@/config';
-import {
-  traceIdMiddleware,
-  httpLogger,
-  globalErrorHandler,
-  notFoundHandler,
-} from '@/middleware';
+import { traceIdMiddleware, httpLogger, globalErrorHandler, notFoundHandler } from '@/middleware';
 import { apiRouter } from '@/routes';
 import { getTraceId } from '@/utils';
 
@@ -38,7 +33,7 @@ const rateLimitMessage = (_req: Request, res: Response): void => {
     traceId: getTraceId(),
     success: false,
     error: {
-      code:    'TOO_MANY_REQUESTS',
+      code: 'TOO_MANY_REQUESTS',
       message: 'Rate limit exceeded. Please try again later.',
     },
   });
@@ -49,7 +44,7 @@ const authRateLimitMessage = (_req: Request, res: Response): void => {
     traceId: getTraceId(),
     success: false,
     error: {
-      code:    'TOO_MANY_REQUESTS',
+      code: 'TOO_MANY_REQUESTS',
       message: 'Too many authentication attempts. Please try again in 15 minutes.',
     },
   });
@@ -75,7 +70,7 @@ export const createApp = (): Application => {
   // ── 2. Security headers ──────────────────────────────────────────────────
   app.use(
     helmet({
-      contentSecurityPolicy:    config.app.isProduction,
+      contentSecurityPolicy: config.app.isProduction,
       crossOriginEmbedderPolicy: config.app.isProduction,
     }),
   );
@@ -94,11 +89,11 @@ export const createApp = (): Application => {
   // Global: 100 requests per 15 minutes per IP
   app.use(
     rateLimit({
-      windowMs:        config.rateLimit.windowMs,
-      max:             config.rateLimit.max,
+      windowMs: config.rateLimit.windowMs,
+      max: config.rateLimit.max,
       standardHeaders: true,
-      legacyHeaders:   false,
-      message:         rateLimitMessage,
+      legacyHeaders: false,
+      message: rateLimitMessage,
     }),
   );
 
@@ -106,11 +101,11 @@ export const createApp = (): Application => {
   app.use(
     `/api/${config.app.apiVersion}/auth`,
     rateLimit({
-      windowMs:        15 * 60 * 1000,
-      max:             10,
+      windowMs: 15 * 60 * 1000,
+      max: 10,
       standardHeaders: true,
-      legacyHeaders:   false,
-      message:         authRateLimitMessage,
+      legacyHeaders: false,
+      message: authRateLimitMessage,
     }),
   );
 

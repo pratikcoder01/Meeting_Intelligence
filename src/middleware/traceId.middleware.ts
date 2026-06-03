@@ -31,8 +31,8 @@ export const TRACE_HEADER = 'X-Trace-Id';
  */
 export const traceIdMiddleware = (req: Request, res: Response, next: NextFunction): void => {
   // Prefer upstream trace header; fall back to a fresh UUID.
-  const traceId =
-    (req.headers[TRACE_HEADER.toLowerCase()] as string | undefined)?.trim() || uuidv4();
+  const rawHeader = req.headers[TRACE_HEADER.toLowerCase()] as string | undefined;
+  const traceId = rawHeader && rawHeader.trim() !== '' ? rawHeader.trim() : uuidv4();
 
   // Expose on the request object for typed access in controllers / services.
   (req as TraceableRequest).traceId = traceId;

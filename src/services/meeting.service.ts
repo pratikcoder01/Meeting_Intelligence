@@ -1,106 +1,144 @@
-import { Meeting, MeetingStatus, PaginatedResult, PaginationParams, TranscriptionStatus } from '@/types';
-import { NotFoundError, ConflictError } from '@/utils/errors';
-import { generateId } from '@/utils/helpers';
+import { prisma } from '@/services/database.service';
+import { NotFoundError, ForbiddenError } from '@/utils/errors';
 import { logger } from '@/utils/logger';
+import { Meeting, MeetingStatus, TranscriptLine, Prisma } from '@prisma/client';
 
-// ─── In-Memory Store (replace with Prisma queries in production) ─────────────
-// This implementation uses an in-memory store as a placeholder so the service
-// layer compiles and runs without a live database. Replace each method body
-// with `prisma.meeting.*` calls once your schema is defined.
+export type MeetingWithTranscript = Meeting & {
+  transcriptLines: TranscriptLine[];
+};
 
-const meetingStore = new Map<string, Meeting>();
+export interface CreateMeetingInput {
+  title: string;
+  participants: string[];
+  meetingDate: Date;
+  transcript: Array<{
+    timestamp: Date;
+    speaker: string;
+    text: string;
+  }>;
+}
 
-// ─── Meeting Service ──────────────────────────────────────────────────────────
+export interface FindAllMeetingsParams {
+  page: number;
+  limit: number;
+  status?: MeetingStatus;
+  from?: Date;
+  to?: Date;
+  userId: string;
+}
+
+export interface PaginatedMeetingsResult {
+  data: Meeting[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export class MeetingService {
   /**
-   * Create a new meeting.
+   * Create a new meeting and save its transcript lines in a database transaction.
+   * Returns the full meeting with transcript lines.
    */
-  async create(
-    data: {
-      title: string;
-      description?: string;
-      scheduledAt: Date;
-      duration?: number;
-      organizerId: string;
-      participants?: string[];
-    },
-  ): Promise<Meeting> {
-    const meeting: Meeting = {
-      id: generateId(),
-      title: data.title,
-      description: data.description,
-      scheduledAt: data.scheduledAt,
-      duration: data.duration,
-      status: MeetingStatus.SCHEDULED,
-      organizerId: data.organizerId,
-      participants: data.participants ?? [],
-      transcriptionStatus: TranscriptionStatus.PENDING,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+  async create(data: CreateMeetingInput, createdBy: string): Promise<MeetingWithTranscript> {
+    const meeting = await prisma.$transaction(async (tx) => {
+      const created = await tx.meeting.create({
+        data: {
+          title: data.title,
+          participants: data.participants,
+          meetingDate: data.meetingDate,
+          createdBy,
+          status: MeetingStatus.SCHEDULED,
+          transcriptLines: {
+            create: data.transcript.map((line, index) => ({
+              timestamp: line.timestamp,
+              speaker: line.speaker,
+              text: line.text,
+              order: index,
+            })),
+          },
+        },
+        include: {
+          transcriptLines: {
+            orderBy: {
+              order: 'asc',
+            },
+          },
+        },
+      });
+      return created;
+    });
 
-    meetingStore.set(meeting.id, meeting);
-    logger.info('Meeting created', { meetingId: meeting.id, organizerId: data.organizerId });
+    logger.info('Meeting created in database', { meetingId: meeting.id, createdBy });
     return meeting;
   }
 
   /**
-   * Find a meeting by ID; throws NotFoundError if missing.
+   * Find a meeting by ID, including its transcript lines ordered by timestamp/order.
+   * Throws NotFoundError if not found, and ForbiddenError if ownership check fails.
    */
-  async findById(id: string): Promise<Meeting> {
-    const meeting = meetingStore.get(id);
+  async findById(id: string, userId: string): Promise<MeetingWithTranscript> {
+    const meeting = await prisma.meeting.findUnique({
+      where: { id },
+      include: {
+        transcriptLines: {
+          orderBy: {
+            order: 'asc',
+          },
+        },
+      },
+    });
+
     if (!meeting) {
       throw new NotFoundError('Meeting', id);
     }
+
+    if (meeting.createdBy !== userId) {
+      throw new ForbiddenError('You do not have permission to access this meeting');
+    }
+
     return meeting;
   }
 
   /**
-   * List meetings with pagination.
+   * List meetings for the authenticated user with pagination and optional filtering by status/date range.
    */
-  async findAll(params: PaginationParams): Promise<PaginatedResult<Meeting>> {
-    const all = Array.from(meetingStore.values()).sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-    );
+  async findAll(params: FindAllMeetingsParams): Promise<PaginatedMeetingsResult> {
+    const { page, limit, status, from, to, userId } = params;
+    const skip = (page - 1) * limit;
 
-    const start = (params.page - 1) * params.perPage;
-    const data = all.slice(start, start + params.perPage);
+    const where: Prisma.MeetingWhereInput = {
+      createdBy: userId,
+      ...(status !== undefined && { status }),
+      ...((from !== undefined || to !== undefined) && {
+        meetingDate: {
+          ...(from !== undefined && { gte: from }),
+          ...(to !== undefined && { lte: to }),
+        },
+      }),
+    };
 
-    return { data, total: all.length, page: params.page, perPage: params.perPage };
-  }
+    const [total, data] = await prisma.$transaction([
+      prisma.meeting.count({ where }),
+      prisma.meeting.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: {
+          meetingDate: 'desc',
+        },
+      }),
+    ]);
 
-  /**
-   * Update a meeting's metadata.
-   */
-  async update(
-    id: string,
-    data: Partial<Pick<Meeting, 'title' | 'description' | 'scheduledAt' | 'duration' | 'status'>>,
-  ): Promise<Meeting> {
-    const existing = await this.findById(id);
-    const updated: Meeting = { ...existing, ...data, updatedAt: new Date() };
-    meetingStore.set(id, updated);
-    logger.info('Meeting updated', { meetingId: id });
-    return updated;
-  }
+    const totalPages = Math.ceil(total / limit);
 
-  /**
-   * Delete a meeting by ID.
-   */
-  async delete(id: string): Promise<void> {
-    await this.findById(id); // throws if not found
-    meetingStore.delete(id);
-    logger.info('Meeting deleted', { meetingId: id });
-  }
-
-  /**
-   * Mark a meeting as cancelled (soft approach via status).
-   */
-  async cancel(id: string): Promise<Meeting> {
-    const meeting = await this.findById(id);
-    if (meeting.status === MeetingStatus.CANCELLED) {
-      throw new ConflictError('Meeting is already cancelled');
-    }
-    return this.update(id, { status: MeetingStatus.CANCELLED });
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages,
+    };
   }
 }
 

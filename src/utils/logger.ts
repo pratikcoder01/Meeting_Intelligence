@@ -20,8 +20,13 @@ import { getTraceId } from '@/utils/asyncContext';
 // ─── Custom log levels (extends Winston defaults) ─────────────────────────────
 const levels = { error: 0, warn: 1, info: 2, http: 3, verbose: 4, debug: 5, silly: 6 };
 const levelColors: Record<string, string> = {
-  error: 'red', warn: 'yellow', info: 'green',
-  http: 'magenta', verbose: 'cyan', debug: 'blue', silly: 'grey',
+  error: 'red',
+  warn: 'yellow',
+  info: 'green',
+  http: 'magenta',
+  verbose: 'cyan',
+  debug: 'blue',
+  silly: 'grey',
 };
 winston.addColors(levelColors);
 
@@ -56,10 +61,8 @@ const prettyFormat = winston.format.combine(
   winston.format.errors({ stack: true }),
   winston.format.printf((info) => {
     const { timestamp, level, message, traceId, stack, ...meta } = info;
-    const tid   = traceId   ? ` [${String(traceId)}]`      : '';
-    const metaStr = Object.keys(meta).length
-      ? `\n  ${JSON.stringify(meta, null, 2)}`
-      : '';
+    const tid = traceId ? ` [${String(traceId)}]` : '';
+    const metaStr = Object.keys(meta).length ? `\n  ${JSON.stringify(meta, null, 2)}` : '';
     const stackStr = stack ? `\n${String(stack)}` : '';
     return `${String(timestamp)} ${level}${tid}: ${String(message)}${stackStr}${metaStr}`;
   }),

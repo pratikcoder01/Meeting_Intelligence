@@ -10,6 +10,6 @@ export {
   meetingController,
   MeetingController,
   CreateMeetingSchema,
-  UpdateMeetingSchema,
+  GetMeetingsQuerySchema,
   MeetingParamsSchema,
 } from './meeting.controller';

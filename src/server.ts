@@ -41,25 +41,28 @@ const bootstrap = async (): Promise<void> => {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info(`Received ${signal} — initiating graceful shutdown`);
 
-    // Stop accepting new connections
-    server.close(async () => {
-      logger.info('HTTP server closed');
-
-      try {
-        await disconnectDatabase();
-        logger.info('Graceful shutdown complete');
-        process.exit(0);
-      } catch (err) {
-        logger.error('Error during shutdown', { err });
-        process.exit(1);
-      }
-    });
-
     // Force exit after 30 seconds if graceful shutdown takes too long
     setTimeout(() => {
       logger.error('Forced shutdown after timeout');
       process.exit(1);
     }, 30_000).unref();
+
+    // Stop accepting new connections
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        logger.info('HTTP server closed');
+        resolve();
+      });
+    });
+
+    try {
+      await disconnectDatabase();
+      logger.info('Graceful shutdown complete');
+      process.exit(0);
+    } catch (err) {
+      logger.error('Error during shutdown', { err });
+      process.exit(1);
+    }
   };
 
   process.on('SIGTERM', () => void shutdown('SIGTERM'));

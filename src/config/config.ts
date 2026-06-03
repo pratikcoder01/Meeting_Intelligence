@@ -75,7 +75,7 @@ export const config = {
   },
 
   cors: {
-    origin: env.CORS_ORIGIN.split(',').map((o) => o.trim()) as string[],
+    origin: env.CORS_ORIGIN.split(',').map((o) => o.trim()),
     credentials: true as const,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as string[],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'] as string[],

@@ -31,8 +31,8 @@ export interface AuthenticatedRequest extends TraceableRequest {
  * `userId` is an explicit, human-readable alias for the same value.
  */
 export interface JwtTokenPayload {
-  sub: string;      // userId — JWT "subject" claim (standard)
-  userId: string;   // explicit alias — always accessible without renaming sub
+  sub: string; // userId — JWT "subject" claim (standard)
+  userId: string; // explicit alias — always accessible without renaming sub
   email: string;
   role: UserRole;
   iat?: number;
@@ -98,31 +98,31 @@ export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
 // =============================================================================
 
 export enum UserRole {
-  ADMIN   = 'ADMIN',
+  ADMIN = 'ADMIN',
   MANAGER = 'MANAGER',
-  MEMBER  = 'MEMBER',
-  GUEST   = 'GUEST',
+  MEMBER = 'MEMBER',
+  GUEST = 'GUEST',
 }
 
 export enum MeetingStatus {
-  SCHEDULED   = 'SCHEDULED',
+  SCHEDULED = 'SCHEDULED',
   IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED   = 'COMPLETED',
-  CANCELLED   = 'CANCELLED',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
 }
 
 export enum TranscriptionStatus {
-  PENDING    = 'PENDING',
+  PENDING = 'PENDING',
   PROCESSING = 'PROCESSING',
-  COMPLETED  = 'COMPLETED',
-  FAILED     = 'FAILED',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
 }
 
 export enum ActionItemStatus {
-  OPEN        = 'OPEN',
+  OPEN = 'OPEN',
   IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED   = 'COMPLETED',
-  CANCELLED   = 'CANCELLED',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
 }
 
 // =============================================================================

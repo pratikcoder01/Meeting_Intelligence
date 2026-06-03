@@ -14,7 +14,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { ZodSchema, ZodError } from 'zod';
+import { ZodType, ZodError } from 'zod';
 import { ValidationError } from '@/utils/errors';
 
 type ValidationTarget = 'body' | 'params' | 'query';
@@ -27,25 +27,26 @@ interface FieldError {
 
 const formatZodErrors = (error: ZodError): FieldError[] =>
   error.errors.map((e) => ({
-    field:    e.path.join('.') || 'root',
-    message:  e.message,
+    field: e.path.join('.') || 'root',
+    message: e.message,
     received: 'received' in e ? e.received : undefined,
   }));
 
 export const validate =
-  <T>(schema: ZodSchema<T>, target: ValidationTarget = 'body') =>
-  (req: Request, _res: Response, next: NextFunction): void => {
-    const result = schema.safeParse(req[target]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (schema: ZodType<any, any, any>, target: ValidationTarget = 'body') =>
+    (req: Request, _res: Response, next: NextFunction): void => {
+      const result = schema.safeParse(req[target]);
 
-    if (!result.success) {
-      const details = formatZodErrors(result.error);
-      next(new ValidationError('Request validation failed', details));
-      return;
-    }
+      if (!result.success) {
+        const details = formatZodErrors(result.error);
+        next(new ValidationError('Request validation failed', details));
+        return;
+      }
 
-    // Replace with the parsed + Zod-coerced/transformed data so controllers
-    // always receive correctly typed values (e.g., Date from string).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (req as any)[target] = result.data;
-    next();
-  };
+      // Replace with the parsed + Zod-coerced/transformed data so controllers
+      // always receive correctly typed values (e.g., Date from string).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+      (req as any)[target] = result.data;
+      next();
+    };

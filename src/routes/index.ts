@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { config } from '@/config';
 import { authRouter } from './auth.routes';
 import { meetingRouter } from './meeting.routes';
+import { sendSuccess } from '@/utils/response';
 
 const router = Router();
 
@@ -13,12 +14,9 @@ const router = Router();
  * @access Public
  */
 router.get('/health', (_req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    service: config.app.serviceName,
+  sendSuccess(res, {
+    status: 'UP',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: config.app.env,
   });
 });
 
@@ -29,7 +27,7 @@ router.get('/health', (_req: Request, res: Response) => {
  */
 router.get('/ready', (_req: Request, res: Response) => {
   // TODO: Check DB connection, Redis, etc. and return 503 if any are unavailable
-  res.json({ status: 'ready', timestamp: new Date().toISOString() });
+  sendSuccess(res, { status: 'ready', timestamp: new Date().toISOString() });
 });
 
 // ─── API Routes ───────────────────────────────────────────────────────────────

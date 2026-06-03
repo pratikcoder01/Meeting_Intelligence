@@ -34,17 +34,17 @@ export const httpLogger = (req: TraceableRequest, res: Response, next: NextFunct
 
   res.on('finish', () => {
     const durationMs = Date.now() - startedAt;
-    const status     = res.statusCode;
-    const level      = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'http';
+    const status = res.statusCode;
+    const level = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'http';
 
     logger.log(level, 'HTTP request completed', {
-      method:     req.method,
-      path:       req.path,
-      query:      Object.keys(req.query).length ? req.query : undefined,
+      method: req.method,
+      path: req.path,
+      query: Object.keys(req.query).length ? req.query : undefined,
       status,
       durationMs,
-      userAgent:  req.get('User-Agent'),
-      ip:         req.ip,
+      userAgent: req.get('User-Agent'),
+      ip: req.ip,
       // userId is present only after the auth middleware has run.
       userId: (req as AuthenticatedRequest).user?.userId ?? undefined,
     });

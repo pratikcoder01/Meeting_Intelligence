@@ -54,10 +54,10 @@ export const RegisterSchema = z.object({
 
   password: z
     .string({ required_error: 'Password is required' })
-    .min(8,  'Password must be at least 8 characters')
+    .min(8, 'Password must be at least 8 characters')
     .max(72, 'Password must be at most 72 characters')
-    .regex(/[A-Z]/,        'Password must contain at least one uppercase letter')
-    .regex(/[0-9]/,        'Password must contain at least one number')
+    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+    .regex(/[0-9]/, 'Password must contain at least one number')
     .regex(/[^a-zA-Z0-9]/, 'Password must contain at least one special character'),
 });
 
@@ -67,7 +67,7 @@ export const RegisterSchema = z.object({
  * user-enumeration attacks (always return the same 401 message).
  */
 export const LoginSchema = z.object({
-  email:    z.string({ required_error: 'Email is required' }).trim().toLowerCase().email(),
+  email: z.string({ required_error: 'Email is required' }).trim().toLowerCase().email(),
   password: z.string({ required_error: 'Password is required' }).min(1, 'Password is required'),
 });
 
@@ -125,9 +125,9 @@ export class AuthController {
       const user = await prisma.user.create({
         data: { name, email, passwordHash },
         select: {
-          id:        true,
-          name:      true,
-          email:     true,
+          id: true,
+          name: true,
+          email: true,
           createdAt: true,
           // passwordHash intentionally excluded from select
         },
@@ -143,16 +143,16 @@ export class AuthController {
       // ── 5. Respond ───────────────────────────────────────────────────
       sendCreated(res, {
         user: {
-          userId:    user.id,
-          name:      user.name,
-          email:     user.email,
-          role:      UserRole.MEMBER,
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          role: UserRole.MEMBER,
           createdAt: user.createdAt,
         },
-        accessToken:  tokens.accessToken,
+        accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        expiresIn:    tokens.expiresIn,
-        tokenType:    'Bearer',
+        expiresIn: tokens.expiresIn,
+        tokenType: 'Bearer',
       });
     } catch (err) {
       next(err);
@@ -188,11 +188,11 @@ export class AuthController {
       const user = await prisma.user.findUnique({
         where: { email },
         select: {
-          id:           true,
-          name:         true,
-          email:        true,
+          id: true,
+          name: true,
+          email: true,
           passwordHash: true,
-          createdAt:    true,
+          createdAt: true,
         },
       });
 
@@ -200,14 +200,17 @@ export class AuthController {
       // If the user does not exist we still run bcrypt.compare() against a
       // dummy hash so the response time is indistinguishable from a wrong-
       // password scenario (timing attack mitigation).
-      const DUMMY_HASH =
-        '$2b$12$invalidhashfortimingneutralizationXXXXXXXXXXXXXXXXXXXXXXX';
+      const DUMMY_HASH = '$2b$12$invalidhashfortimingneutralizationXXXXXXXXXXXXXXXXXXXXXXX';
 
       const hashToCheck = user?.passwordHash ?? DUMMY_HASH;
       const passwordMatch = await verifyPassword(password, hashToCheck);
 
       if (!user || !passwordMatch) {
-        logger.warn('Login failed', { email, reason: !user ? 'user_not_found' : 'wrong_password', traceId });
+        logger.warn('Login failed', {
+          email,
+          reason: !user ? 'user_not_found' : 'wrong_password',
+          traceId,
+        });
         throw new UnauthorizedError('Invalid email address or password.');
       }
 
@@ -219,16 +222,16 @@ export class AuthController {
       // ── 4. Respond ───────────────────────────────────────────────────
       sendSuccess(res, {
         user: {
-          userId:    user.id,
-          name:      user.name,
-          email:     user.email,
-          role:      UserRole.MEMBER,
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          role: UserRole.MEMBER,
           createdAt: user.createdAt,
         },
-        accessToken:  tokens.accessToken,
+        accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        expiresIn:    tokens.expiresIn,
-        tokenType:    'Bearer',
+        expiresIn: tokens.expiresIn,
+        tokenType: 'Bearer',
       });
     } catch (err) {
       next(err);
@@ -260,7 +263,7 @@ export class AuthController {
 
       // ── 2. Confirm the user still exists (not deleted/suspended) ────
       const user = await prisma.user.findUnique({
-        where:  { id: decoded.userId },
+        where: { id: decoded.userId },
         select: { id: true, email: true, name: true },
       });
       if (!user) {
@@ -275,10 +278,10 @@ export class AuthController {
       const tokens = generateTokenPair(user.id, user.email, decoded.role);
 
       sendSuccess(res, {
-        accessToken:  tokens.accessToken,
+        accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        expiresIn:    tokens.expiresIn,
-        tokenType:    'Bearer',
+        expiresIn: tokens.expiresIn,
+        tokenType: 'Bearer',
       });
     } catch (err) {
       next(err);
@@ -296,10 +299,10 @@ export class AuthController {
       // `req.user` is guaranteed by the `authenticate` middleware.
       // Cast is safe — the route definition applies `authenticate` before this.
       const { userId } = (req as import('@/types').AuthenticatedRequest).user;
-      const traceId    = (req as TraceableRequest).traceId;
+      const traceId = (req as TraceableRequest).traceId;
 
       const user = await prisma.user.findUnique({
-        where:  { id: userId },
+        where: { id: userId },
         select: { id: true, name: true, email: true, createdAt: true },
       });
 
@@ -311,10 +314,10 @@ export class AuthController {
       logger.debug('Fetched current user profile', { userId, traceId });
 
       sendSuccess(res, {
-        userId:    user.id,
-        name:      user.name,
-        email:     user.email,
-        role:      UserRole.MEMBER,
+        userId: user.id,
+        name: user.name,
+        email: user.email,
+        role: UserRole.MEMBER,
         createdAt: user.createdAt,
       });
     } catch (err) {
