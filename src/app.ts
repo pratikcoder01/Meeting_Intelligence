@@ -21,6 +21,7 @@ import { config } from '@/config';
 import { traceIdMiddleware, httpLogger, globalErrorHandler, notFoundHandler } from '@/middleware';
 import { apiRouter } from '@/routes';
 import { getTraceId } from '@/utils';
+import { swaggerUi, swaggerSpec } from '@/config/swagger';
 
 // ─── Rate-limit error body factory ───────────────────────────────────────────
 // express-rate-limit calls this function when a client is throttled.
@@ -110,6 +111,9 @@ export const createApp = (): Application => {
   );
 
   // ── 6. Routes ────────────────────────────────────────────────────────────
+  // Swagger Documentation UI
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
   app.use('/', apiRouter);
 
   // ── 7. 404 catch-all ─────────────────────────────────────────────────────
