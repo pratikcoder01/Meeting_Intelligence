@@ -133,6 +133,36 @@ export class MeetingController {
       next(err);
     }
   };
+
+  /**
+   * GET /meetings/:id/analysis — get meeting analysis
+   */
+  getAnalysis = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const { id } = req.params as z.infer<typeof MeetingParamsSchema>;
+
+      const analysis = await meetingService.findAnalysis(id, authReq.user.userId);
+      sendSuccess(res, analysis);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  /**
+   * POST /meetings/:id/analyze — trigger meeting analysis
+   */
+  analyze = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      const { id } = req.params as z.infer<typeof MeetingParamsSchema>;
+
+      const analysis = await meetingService.generateAnalysis(id, authReq.user.userId);
+      sendSuccess(res, analysis);
+    } catch (err) {
+      next(err);
+    }
+  };
 }
 
 export const meetingController = new MeetingController();

@@ -34,4 +34,18 @@ router.get('/:id', validate(MeetingParamsSchema, 'params'), meetingController.ge
  */
 router.post('/', validate(CreateMeetingSchema), meetingController.create);
 
+/**
+ * @route  GET /api/v1/meetings/:id/analysis
+ * @desc   Get the associated analysis for a meeting
+ * @access Private
+ */
+router.get('/:id/analysis', validate(MeetingParamsSchema, 'params'), meetingController.getAnalysis);
+
+/**
+ * @route  POST /api/v1/meetings/:id/analyze
+ * @desc   Trigger AI analysis for a meeting
+ * @access Private
+ */
+router.post('/:id/analyze', validate(MeetingParamsSchema, 'params'), meetingController.analyze);
+
 export { router as meetingRouter };
