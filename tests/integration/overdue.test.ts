@@ -13,8 +13,6 @@ describe('Overdue Action Items & Scheduler (Integration)', () => {
   let userId: string;
   let meetingId: string;
   let overdueItemId: string;
-  let pendingItemId: string;
-  let completedItemId: string;
 
   beforeEach(async () => {
     // 1. Setup user and tokens
@@ -59,7 +57,7 @@ describe('Overdue Action Items & Scheduler (Integration)', () => {
     overdueItemId = overdueItem.id;
 
     // Pending item
-    const pendingItem = await prisma.actionItem.create({
+    await prisma.actionItem.create({
       data: {
         meetingId,
         task: 'Prepare demo slides',
@@ -69,10 +67,8 @@ describe('Overdue Action Items & Scheduler (Integration)', () => {
         citations: [],
       },
     });
-    pendingItemId = pendingItem.id;
-
     // Completed item (due in past but completed)
-    const completedItem = await prisma.actionItem.create({
+    await prisma.actionItem.create({
       data: {
         meetingId,
         task: 'Sign budget draft',
@@ -82,7 +78,6 @@ describe('Overdue Action Items & Scheduler (Integration)', () => {
         citations: [],
       },
     });
-    completedItemId = completedItem.id;
   });
 
   describe('GET /api/v1/action-items/overdue', () => {

@@ -1,6 +1,5 @@
 import request from 'supertest';
 import { createApp } from '../../src/app';
-import { prisma } from '../../src/services/database.service';
 
 const app = createApp();
 

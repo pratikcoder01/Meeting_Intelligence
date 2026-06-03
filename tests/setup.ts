@@ -4,6 +4,16 @@ import path from 'path';
 // Load test environment variables
 dotenv.config({ path: path.join(__dirname, '../.env.test') });
 
+// Mock jose library to avoid ESM parsing issues in CommonJS Jest environment.
+// jwtVerify is mocked to REJECT so the auth middleware falls through to the
+// local HS256 jwt.verify() path — integration tests sign real tokens that
+// must be decoded with the actual secret, not a hardcoded mock payload.
+jest.mock('jose', () => ({
+  createRemoteJWKSet: jest.fn(() => jest.fn()),
+  jwtVerify: jest.fn().mockRejectedValue(new Error('JWKS mock: force HS256 fallback')),
+}));
+
+
 import { prisma } from '../src/services/database.service';
 
 let isDbConnected = false;

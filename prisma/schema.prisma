@@ -71,7 +71,7 @@ enum ReminderDeliveryStatus {
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
-  passwordHash String   @map("password_hash")
+  passwordHash String?  @map("password_hash")
   name         String
   createdAt    DateTime @default(now()) @map("created_at")
 

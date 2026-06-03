@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { api } from '../utils/api';
+import { supabase } from '../utils/supabase';
 
 interface User {
   userId: string;
@@ -32,67 +33,100 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (response.data?.success) {
         setUser(response.data.data);
       } else {
-        logout();
+        setUser(null);
       }
     } catch (err) {
-      logout();
+      setUser(null);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    const token = localStorage.getItem('accessToken');
-    if (token) {
-      void fetchProfile();
-    } else {
-      setLoading(false);
-    }
+    // 1. Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        localStorage.setItem('accessToken', session.access_token);
+        localStorage.setItem('refreshToken', session.refresh_token || '');
+        void fetchProfile();
+      } else {
+        setLoading(false);
+      }
+    });
+
+    // 2. Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session) {
+        localStorage.setItem('accessToken', session.access_token);
+        localStorage.setItem('refreshToken', session.refresh_token || '');
+        await fetchProfile();
+      } else {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        setUser(null);
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (email: string, password: string) => {
     setError(null);
-    try {
-      const response = await api.post('/api/v1/auth/login', { email, password });
-      if (response.data?.success) {
-        const { accessToken, refreshToken, user: userProfile } = response.data.data;
-        localStorage.setItem('accessToken', accessToken);
-        localStorage.setItem('refreshToken', refreshToken);
-        setUser(userProfile);
-      } else {
-        throw new Error(response.data?.error?.message || 'Login failed');
-      }
-    } catch (err: any) {
-      const message = err.response?.data?.error?.message || err.message || 'Invalid email or password';
-      setError(message);
-      throw new Error(message);
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (signInError) {
+      setError(signInError.message);
+      throw new Error(signInError.message);
     }
   };
 
   const register = async (name: string, email: string, password: string) => {
     setError(null);
-    try {
-      const response = await api.post('/api/v1/auth/register', { name, email, password });
-      if (response.data?.success) {
-        const { accessToken, refreshToken, user: userProfile } = response.data.data;
-        localStorage.setItem('accessToken', accessToken);
-        localStorage.setItem('refreshToken', refreshToken);
-        setUser(userProfile);
-      } else {
-        throw new Error(response.data?.error?.message || 'Registration failed');
+    const { error: signUpError, data } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name,
+        },
+      },
+    });
+
+    if (signUpError) {
+      console.error('Supabase signUp error:', {
+        message: signUpError.message,
+        status: signUpError.status,
+        name: signUpError.name,
+      });
+
+      // Provide actionable messages for common Supabase Auth errors
+      let userMessage = signUpError.message;
+      if (signUpError.status === 429) {
+        userMessage = 'Too many signup attempts. Please wait a few minutes and try again.';
+      } else if (signUpError.message === 'A server error has occurred') {
+        userMessage = 'Supabase Auth encountered an internal error. Please try again in a few minutes, or check the Supabase Dashboard for service status.';
       }
-    } catch (err: any) {
-      const message = err.response?.data?.error?.message || err.message || 'Registration failed';
-      setError(message);
-      throw new Error(message);
+
+      setError(userMessage);
+      throw new Error(userMessage);
+    }
+
+    // If Supabase returns a user but no session, email confirmation is required
+    if (data?.user && !data?.session) {
+      setError('Please check your email to confirm your account before signing in.');
+      return;
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    setUser(null);
+  const logout = async () => {
     setError(null);
+    await supabase.auth.signOut();
   };
 
   return (

@@ -16,9 +16,9 @@
 
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { config } from '@/config';
 import {
-  JwtTokenPayload,
   JwtUserPayload,
   UserRole,
   TraceableRequest,
@@ -41,42 +41,81 @@ const extractBearerToken = (req: Request): string | null => {
 
 // ─── JWT verification ─────────────────────────────────────────────────────────
 
+import { prisma } from '@/services/database.service';
+
+const getJwtSecret = (): string => {
+  return process.env.SUPABASE_JWT_SECRET || config.jwt.secret;
+};
+
+// Cache JWKS set instance
+let jwksInstance: ReturnType<typeof createRemoteJWKSet> | null = null;
+
+const getJWKS = (): ReturnType<typeof createRemoteJWKSet> | null => {
+  if (jwksInstance) return jwksInstance;
+
+  const supabaseUrl =
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  if (!supabaseUrl) return null;
+
+  const jwksUrl = `${supabaseUrl.replace(/\/$/, '')}/auth/v1/.well-known/jwks.json`;
+  jwksInstance = createRemoteJWKSet(new URL(jwksUrl));
+  return jwksInstance;
+};
+
+// ─── JWT verification ─────────────────────────────────────────────────────────
+
 /**
- * Verify and decode a JWT access token.
- * Throws a typed UnauthorizedError on any failure so the global error handler
- * formats it correctly.
+ * Verify and decode a Supabase JWT access token using either JWKS (ES256) or Local Secret (HS256).
  */
-const verifyAccessToken = (token: string, traceId: string): JwtUserPayload => {
-  let decoded: JwtTokenPayload;
+const verifyAccessToken = async (token: string, traceId: string): Promise<JwtUserPayload> => {
+  let decoded: any;
 
   try {
-    decoded = jwt.verify(token, config.jwt.secret, {
-      issuer: config.jwt.issuer,
-      audience: config.jwt.audience,
-    }) as unknown as JwtTokenPayload;
+    const JWKS = getJWKS();
+    if (JWKS) {
+      try {
+        // Try verifying with JWKS (asymmetric ES256) first
+        const { payload } = await jwtVerify(token, JWKS, {
+          algorithms: ['ES256'],
+        });
+        decoded = payload;
+      } catch (jwksErr: any) {
+        // If the token is not ES256 or JWKS fails, fall back to symmetric HS256 validation
+        logger.debug('JWKS verification skipped or failed, falling back to local secret verify', {
+          traceId,
+          error: jwksErr.message,
+        });
+        const secret = getJwtSecret();
+        decoded = jwt.verify(token, secret) as any;
+      }
+    } else {
+      const secret = getJwtSecret();
+      decoded = jwt.verify(token, secret) as any;
+    }
   } catch (err) {
-    if (err instanceof jwt.TokenExpiredError) {
-      logger.warn('JWT expired', { traceId, expiredAt: err.expiredAt });
+    if (err instanceof jwt.TokenExpiredError || (err as any).code === 'ERR_JWT_EXPIRED') {
+      logger.warn('JWT expired', { traceId });
       throw new UnauthorizedError('Access token has expired. Please refresh your session.');
     }
-    if (err instanceof jwt.JsonWebTokenError) {
-      logger.warn('JWT invalid', { traceId, reason: err.message });
-      throw new UnauthorizedError('Access token is invalid.');
-    }
-    // NotBeforeError or any other jwt error
-    throw new UnauthorizedError('Token verification failed.');
+    logger.warn('JWT invalid', { traceId, reason: (err as any).message });
+    throw new UnauthorizedError('Access token is invalid.');
   }
 
-  // Validate that the payload contains all required fields.
-  if (!decoded.userId || !decoded.email || !decoded.role) {
-    logger.warn('JWT payload missing required fields', { traceId, payload: decoded });
+  const userId = decoded.sub;
+  const email = decoded.email;
+
+  if (!userId || !email) {
+    logger.warn('JWT payload missing sub or email', { traceId, payload: decoded });
     throw new UnauthorizedError('Access token has an invalid structure.');
   }
 
   return {
-    userId: decoded.userId,
-    email: decoded.email,
-    role: decoded.role,
+    userId,
+    email,
+    role: UserRole.MEMBER,
   };
 };
 
@@ -84,12 +123,9 @@ const verifyAccessToken = (token: string, traceId: string): JwtUserPayload => {
 
 /**
  * Require a valid JWT Bearer token.
- *
- * On success: attaches `req.user: JwtUserPayload` and calls next().
- * On failure: responds immediately with:
- *   HTTP 401  { traceId, success: false, error: { code: 'UNAUTHORIZED', message } }
+ * Automatically synchronizes Supabase users with the public.users database profiles.
  */
-export const authenticate = (req: Request, res: Response, next: NextFunction): void => {
+export const authenticate = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const traceableReq = req as TraceableRequest;
   const traceId = traceableReq.traceId ?? 'unknown';
 
@@ -100,29 +136,66 @@ export const authenticate = (req: Request, res: Response, next: NextFunction): v
   }
 
   try {
-    const userPayload = verifyAccessToken(token, traceId);
+    const userPayload = await verifyAccessToken(token, traceId);
+    
+    // Check if the user exists in public.users database
+    let user = await prisma.user.findUnique({
+      where: { id: userPayload.userId },
+    });
+
+    if (!user) {
+      const jwtDecoded = jwt.decode(token) as any;
+      const name = jwtDecoded?.user_metadata?.name || 'User';
+
+      user = await prisma.user.create({
+        data: {
+          id: userPayload.userId,
+          email: userPayload.email,
+          name,
+        },
+      });
+      logger.info('Dynamically synchronized user profile from Supabase Auth token to database', {
+        userId: user.id,
+        email: user.email,
+        traceId,
+      });
+    }
+
     (req as AuthenticatedRequest).user = userPayload;
     next();
   } catch (err) {
-    // UnauthorizedError is an AppError subclass — pass to the global error handler
-    // so it uses the unified format (which also injects traceId).
     next(err);
   }
 };
 
 /**
- * Optionally authenticate — attaches `req.user` if a valid token is present,
- * but does NOT reject the request if the token is missing or invalid.
- * Useful for routes that serve both authenticated and anonymous users.
+ * Optionally authenticate — attaches req.user if a valid token is present and synced.
  */
-export const optionalAuthenticate = (req: Request, _res: Response, next: NextFunction): void => {
+export const optionalAuthenticate = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
   const token = extractBearerToken(req);
   if (token) {
     try {
-      const userPayload = verifyAccessToken(token, (req as TraceableRequest).traceId);
+      const userPayload = await verifyAccessToken(token, (req as TraceableRequest).traceId);
+      
+      let user = await prisma.user.findUnique({
+        where: { id: userPayload.userId },
+      });
+
+      if (!user) {
+        const jwtDecoded = jwt.decode(token) as any;
+        const name = jwtDecoded?.user_metadata?.name || 'User';
+        await prisma.user.create({
+          data: {
+            id: userPayload.userId,
+            email: userPayload.email,
+            name,
+          },
+        });
+      }
+
       (req as AuthenticatedRequest).user = userPayload;
     } catch {
-      // Silently ignore — optional auth does not block the request.
+      // Ignore
     }
   }
   next();
