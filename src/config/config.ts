@@ -36,6 +36,10 @@ const envSchema = z.object({
   // File Upload
   MAX_FILE_SIZE_MB: z.coerce.number().int().positive().default(100),
   UPLOAD_DIR: z.string().default('uploads'),
+
+  // Email / Resend
+  RESEND_API_KEY: z.string().default('mock-key'),
+  EMAIL_FROM: z.string().email().default('reminders@yourdomain.com'),
 });
 
 // ─── Parse & Validate ────────────────────────────────────────────────────────
@@ -95,6 +99,11 @@ export const config = {
   upload: {
     maxFileSizeMb: env.MAX_FILE_SIZE_MB,
     uploadDir: env.UPLOAD_DIR,
+  },
+
+  email: {
+    resendApiKey: env.RESEND_API_KEY,
+    from: env.EMAIL_FROM,
   },
 } as const;
 

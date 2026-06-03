@@ -300,6 +300,7 @@ model ReminderLog {
   recipient    String                 // email / slack-id / phone depending on channel
   status       ReminderDeliveryStatus
   channel      ReminderChannel
+  errorMessage String?                @map("error_message")
 
   // ── Relations ──────────────────────────────────────────────────────────
   actionItem ActionItem @relation(fields: [actionItemId], references: [id], onDelete: Cascade)

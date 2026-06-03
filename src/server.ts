@@ -12,7 +12,7 @@
 import { config } from '@/config';
 import { logger } from '@/utils/logger';
 import { createApp } from './app';
-import { connectDatabase, disconnectDatabase } from '@/services';
+import { connectDatabase, disconnectDatabase, reminderScheduler } from '@/services';
 import http from 'http';
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
@@ -35,6 +35,9 @@ const bootstrap = async (): Promise<void> => {
       apiBase: `/api/${config.app.apiVersion}`,
       pid: process.pid,
     });
+
+    // Start background overdue action item reminders
+    reminderScheduler.start();
   });
 
   // ── Graceful Shutdown ──────────────────────────────────────────────────
@@ -46,6 +49,13 @@ const bootstrap = async (): Promise<void> => {
       logger.error('Forced shutdown after timeout');
       process.exit(1);
     }, 30_000).unref();
+
+    // Stop background reminder scheduler
+    try {
+      reminderScheduler.stop();
+    } catch (err) {
+      logger.error('Error stopping reminder scheduler during shutdown', { err });
+    }
 
     // Stop accepting new connections
     await new Promise<void>((resolve) => {
