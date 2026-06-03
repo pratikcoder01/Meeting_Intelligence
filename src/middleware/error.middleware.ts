@@ -1,15 +1,63 @@
+/**
+ * error.middleware.ts
+ *
+ * Two Express error-handling middleware functions:
+ *
+ *  notFoundHandler    — Catches requests that matched no route (404).
+ *  globalErrorHandler — Terminal error handler; must be the LAST middleware
+ *                       registered. Formats every thrown error into the
+ *                       unified response envelope.
+ *
+ * Envelope shapes:
+ *
+ *  Operational error (AppError subclass):
+ *    HTTP <statusCode>
+ *    { traceId, success: false, error: { code, message, details? } }
+ *
+ *  Programming error (unexpected):
+ *    HTTP 500
+ *    { traceId, success: false, error: { code: 'INTERNAL_SERVER_ERROR', message } }
+ *    (stack trace only included in non-production environments)
+ *
+ * Logging policy:
+ *  - 5xx errors → logger.error (always)
+ *  - 4xx errors → logger.warn
+ *  - errorDetails (stack, context) are always logged but never leaked to clients
+ *    in production.
+ */
+
 import { Request, Response, NextFunction } from 'express';
 import { StatusCodes } from 'http-status-codes';
 import { AppError } from '@/utils/errors';
+import { sendError } from '@/utils/response';
 import { logger } from '@/utils/logger';
 import { config } from '@/config';
-import { ErrorResponse } from '@/utils/response';
-import { AuthenticatedRequest } from '@/types';
+import { TraceableRequest } from '@/types';
 
-// ─── Global Error Handler ─────────────────────────────────────────────────────
+// ─── 404 handler ─────────────────────────────────────────────────────────────
+
 /**
- * Express 4.x global error-handling middleware.
- * Must be registered AFTER all routes.
+ * Catches requests that did not match any registered route.
+ * Must be registered AFTER all routes, BEFORE globalErrorHandler.
+ */
+export const notFoundHandler = (req: Request, res: Response): void => {
+  const traceId = (req as TraceableRequest).traceId ?? 'unknown';
+
+  logger.warn('Route not found', {
+    method:  req.method,
+    path:    req.path,
+    traceId,
+  });
+
+  sendError(res, StatusCodes.NOT_FOUND, 'NOT_FOUND', `Route ${req.method} ${req.path} not found`);
+};
+
+// ─── Global error handler ─────────────────────────────────────────────────────
+
+/**
+ * Receives errors thrown by route handlers and other middleware.
+ * Express identifies error-handling middleware by the 4-argument signature
+ * (err, req, res, next) — the `_next` parameter must be present.
  */
 export const globalErrorHandler = (
   err: Error,
@@ -18,75 +66,44 @@ export const globalErrorHandler = (
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _next: NextFunction,
 ): void => {
-  const requestId = (req as AuthenticatedRequest).requestId ?? 'unknown';
+  const traceId = (req as TraceableRequest).traceId ?? 'unknown';
 
-  // ── Operational Errors (expected, safe to expose to client) ──────────────
+  // ── Operational errors ────────────────────────────────────────────────
   if (err instanceof AppError && err.isOperational) {
-    logger.warn('Operational error', {
-      requestId,
-      code: err.code,
-      message: err.message,
+    const logLevel = err.statusCode >= 500 ? 'error' : 'warn';
+
+    const logMeta: Record<string, unknown> = {
+      traceId,
+      code:       err.code,
+      message:    err.message,
       statusCode: err.statusCode,
-      path: req.path,
-      method: req.method,
-    });
-
-    const body: ErrorResponse = {
-      success: false,
-      error: {
-        code: err.code,
-        message: err.message,
-        ...(err.details !== undefined && { details: err.details }),
-      },
-      requestId,
+      method:     req.method,
+      path:       req.path,
     };
+    if (err.details !== undefined) logMeta['errorDetails'] = err.details;
 
-    res.status(err.statusCode).json(body);
+    logger[logLevel]('Operational error', logMeta);
+
+    sendError(res, err.statusCode, err.code, err.message, err.details);
     return;
   }
 
-  // ── Unexpected / Programming Errors ─────────────────────────────────────
+  // ── Unexpected / programming errors ───────────────────────────────────
+  // These should NEVER happen in normal operation. Log full details for
+  // debugging but never expose stack traces or internals to clients.
   logger.error('Unexpected error', {
-    requestId,
-    message: err.message,
-    stack: err.stack,
-    path: req.path,
-    method: req.method,
+    traceId,
+    message:      err.message,
+    errorDetails: err.stack,
+    method:       req.method,
+    path:         req.path,
   });
 
-  const body: ErrorResponse = {
-    success: false,
-    error: {
-      code: 'INTERNAL_SERVER_ERROR',
-      message: config.app.isProduction
-        ? 'An unexpected error occurred. Please try again later.'
-        : err.message,
-      ...(!config.app.isProduction && {
-        details: { stack: err.stack },
-      }),
-    },
-    requestId,
-  };
+  const clientMessage = config.app.isProduction
+    ? 'An unexpected error occurred. Please try again or contact support.'
+    : err.message;
 
-  res.status(StatusCodes.INTERNAL_SERVER_ERROR).json(body);
-};
+  const details = config.app.isProduction ? undefined : { stack: err.stack };
 
-// ─── 404 Handler ─────────────────────────────────────────────────────────────
-/**
- * Catch-all for routes that don't exist. Must be registered after all routes
- * but before the global error handler.
- */
-export const notFoundHandler = (req: Request, res: Response): void => {
-  const requestId = (req as AuthenticatedRequest).requestId ?? 'unknown';
-
-  const body: ErrorResponse = {
-    success: false,
-    error: {
-      code: 'NOT_FOUND',
-      message: `Route ${req.method} ${req.path} not found`,
-    },
-    requestId,
-  };
-
-  res.status(StatusCodes.NOT_FOUND).json(body);
+  sendError(res, StatusCodes.INTERNAL_SERVER_ERROR, 'INTERNAL_SERVER_ERROR', clientMessage, details);
 };

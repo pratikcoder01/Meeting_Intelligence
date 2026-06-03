@@ -1,17 +1,38 @@
 import { Request } from 'express';
 
-// ─── Authenticated Request ────────────────────────────────────────────────────
+// =============================================================================
+//  Request Augmentation
+// =============================================================================
+
 /**
- * Extends Express Request with a typed `user` property set by the auth middleware.
+ * Every request gets a traceId attached by the traceId middleware.
+ * All downstream middleware and controllers use this type instead of
+ * the plain Express Request.
  */
-export interface AuthenticatedRequest extends Request {
-  user: JwtPayload;
-  requestId: string;
+export interface TraceableRequest extends Request {
+  traceId: string;
 }
 
-// ─── JWT ──────────────────────────────────────────────────────────────────────
-export interface JwtPayload {
-  sub: string;        // User ID
+/**
+ * A request that has passed through the JWT auth middleware.
+ * `user` is guaranteed to be populated.
+ */
+export interface AuthenticatedRequest extends TraceableRequest {
+  user: JwtUserPayload;
+}
+
+// =============================================================================
+//  JWT
+// =============================================================================
+
+/**
+ * Shape of the data embedded inside a signed JWT.
+ * `sub` follows the JWT standard (RFC 7519 §4.1.2).
+ * `userId` is an explicit, human-readable alias for the same value.
+ */
+export interface JwtTokenPayload {
+  sub: string;      // userId — JWT "subject" claim (standard)
+  userId: string;   // explicit alias — always accessible without renaming sub
   email: string;
   role: UserRole;
   iat?: number;
@@ -20,19 +41,93 @@ export interface JwtPayload {
   aud?: string | string[];
 }
 
+/**
+ * What gets attached to `req.user` after the auth middleware validates
+ * and decodes the JWT. Role is included so route handlers can do RBAC
+ * without a second database round-trip.
+ */
+export interface JwtUserPayload {
+  userId: string;
+  email: string;
+  role: UserRole;
+}
+
+/** @deprecated Use JwtTokenPayload. Kept to avoid breaking imports. */
+export type JwtPayload = JwtTokenPayload;
+
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;
-  expiresIn: number; // seconds
+  expiresIn: number; // seconds until access token expires
 }
 
-// ─── User ─────────────────────────────────────────────────────────────────────
-export enum UserRole {
-  ADMIN = 'ADMIN',
-  MANAGER = 'MANAGER',
-  MEMBER = 'MEMBER',
-  GUEST = 'GUEST',
+// =============================================================================
+//  Unified API Response Envelope
+// =============================================================================
+
+/**
+ * Every successful API response wraps its payload in this shape.
+ * `traceId` lets clients correlate frontend errors with server logs.
+ */
+export interface ApiSuccessResponse<T> {
+  traceId: string;
+  success: true;
+  data: T;
 }
+
+/**
+ * Every error response — regardless of HTTP status code — uses this shape.
+ * `code` is a machine-readable SCREAMING_SNAKE_CASE identifier.
+ * `message` is a human-readable description safe to show in a UI.
+ * `details` carries field-level validation errors (optional).
+ */
+export interface ApiErrorResponse {
+  traceId: string;
+  success: false;
+  error: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+}
+
+export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
+
+// =============================================================================
+//  Domain Enums
+// =============================================================================
+
+export enum UserRole {
+  ADMIN   = 'ADMIN',
+  MANAGER = 'MANAGER',
+  MEMBER  = 'MEMBER',
+  GUEST   = 'GUEST',
+}
+
+export enum MeetingStatus {
+  SCHEDULED   = 'SCHEDULED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED   = 'COMPLETED',
+  CANCELLED   = 'CANCELLED',
+}
+
+export enum TranscriptionStatus {
+  PENDING    = 'PENDING',
+  PROCESSING = 'PROCESSING',
+  COMPLETED  = 'COMPLETED',
+  FAILED     = 'FAILED',
+}
+
+export enum ActionItemStatus {
+  OPEN        = 'OPEN',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED   = 'COMPLETED',
+  CANCELLED   = 'CANCELLED',
+}
+
+// =============================================================================
+//  Domain Interfaces
+// =============================================================================
 
 export interface User {
   id: string;
@@ -43,29 +138,14 @@ export interface User {
   updatedAt: Date;
 }
 
-export type UserWithoutPassword = Omit<User, 'passwordHash'>;
-
-// ─── Meeting ──────────────────────────────────────────────────────────────────
-export enum MeetingStatus {
-  SCHEDULED = 'SCHEDULED',
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
-}
-
-export enum TranscriptionStatus {
-  PENDING = 'PENDING',
-  PROCESSING = 'PROCESSING',
-  COMPLETED = 'COMPLETED',
-  FAILED = 'FAILED',
-}
+export type UserPublic = Omit<User, 'passwordHash'>;
 
 export interface Meeting {
   id: string;
   title: string;
   description?: string;
   scheduledAt: Date;
-  duration?: number; // minutes
+  duration?: number;
   status: MeetingStatus;
   organizerId: string;
   participants: string[];
@@ -75,15 +155,14 @@ export interface Meeting {
   updatedAt: Date;
 }
 
-// ─── Transcript ───────────────────────────────────────────────────────────────
 export interface TranscriptSegment {
   id: string;
   speakerId: string;
   speakerName: string;
   text: string;
-  startTime: number; // seconds from start
+  startTime: number;
   endTime: number;
-  confidence: number; // 0–1
+  confidence: number;
 }
 
 export interface Transcript {
@@ -93,14 +172,6 @@ export interface Transcript {
   language: string;
   totalDuration: number;
   createdAt: Date;
-}
-
-// ─── Action Item ──────────────────────────────────────────────────────────────
-export enum ActionItemStatus {
-  OPEN = 'OPEN',
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
 }
 
 export interface ActionItem {
@@ -115,7 +186,6 @@ export interface ActionItem {
   updatedAt: Date;
 }
 
-// ─── Meeting Summary ──────────────────────────────────────────────────────────
 export interface MeetingSummary {
   id: string;
   meetingId: string;
@@ -127,7 +197,10 @@ export interface MeetingSummary {
   generatedAt: Date;
 }
 
-// ─── Pagination ───────────────────────────────────────────────────────────────
+// =============================================================================
+//  Shared Utility Types
+// =============================================================================
+
 export interface PaginationParams {
   page: number;
   perPage: number;
@@ -140,7 +213,6 @@ export interface PaginatedResult<T> {
   perPage: number;
 }
 
-// ─── Service Response ─────────────────────────────────────────────────────────
 export interface ServiceResult<T> {
   data: T;
   message?: string;

@@ -1,43 +1,54 @@
-import { Request, Response, NextFunction } from 'express';
-import type { IncomingMessage } from 'http';
-import { v4 as uuidv4 } from 'uuid';
-import morgan from 'morgan';
-import { logger } from '@/utils/logger';
-import { AuthenticatedRequest } from '@/types';
-
-// ─── Request ID Middleware ────────────────────────────────────────────────────
 /**
- * Attaches a unique request ID to every incoming request.
- * Reads from X-Request-Id header if provided by an upstream proxy,
- * otherwise generates a new UUID v4.
+ * httpLogger.middleware.ts
+ *
+ * Structured HTTP request/response logger built on top of Winston.
+ *
+ * Unlike Morgan (which is a string-based HTTP logger), this middleware produces
+ * fully structured JSON log entries that include:
+ *   - traceId  (from AsyncLocalStorage — automatically present)
+ *   - method, path, status, duration
+ *   - userAgent, ip
+ *   - userId (when the request is authenticated)
+ *
+ * The log entry is emitted in the `finish` event of the response so that
+ * the final HTTP status code is always captured (even after error handlers
+ * modify the status).
+ *
+ * Skips health/readiness endpoints to avoid noise in log aggregators.
  */
-export const requestId = (req: Request, res: Response, next: NextFunction): void => {
-  const id = (req.headers['x-request-id'] as string | undefined) ?? uuidv4();
-  (req as AuthenticatedRequest).requestId = id;
-  res.setHeader('X-Request-Id', id);
+
+import { Response, NextFunction } from 'express';
+import { logger } from '@/utils/logger';
+import { TraceableRequest, AuthenticatedRequest } from '@/types';
+
+const SKIP_PATHS = new Set(['/health', '/ready']);
+
+export const httpLogger = (req: TraceableRequest, res: Response, next: NextFunction): void => {
+  // Skip liveness/readiness probes from generating log noise.
+  if (SKIP_PATHS.has(req.path)) {
+    next();
+    return;
+  }
+
+  const startedAt = Date.now();
+
+  res.on('finish', () => {
+    const durationMs = Date.now() - startedAt;
+    const status     = res.statusCode;
+    const level      = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'http';
+
+    logger.log(level, 'HTTP request completed', {
+      method:     req.method,
+      path:       req.path,
+      query:      Object.keys(req.query).length ? req.query : undefined,
+      status,
+      durationMs,
+      userAgent:  req.get('User-Agent'),
+      ip:         req.ip,
+      // userId is present only after the auth middleware has run.
+      userId: (req as AuthenticatedRequest).user?.userId ?? undefined,
+    });
+  });
+
   next();
 };
-
-// ─── Morgan HTTP Logger ───────────────────────────────────────────────────────
-/**
- * HTTP request logger using Morgan, piped into Winston.
- * Logs request method, path, status, response time, and request ID.
- */
-morgan.token('request-id', (req: Request) => (req as AuthenticatedRequest).requestId ?? '-');
-morgan.token('user-id', (req: Request) => (req as AuthenticatedRequest).user?.sub ?? 'anonymous');
-
-const morganFormat =
-  ':method :url :status :res[content-length] bytes - :response-time ms | req-id=:request-id user=:user-id';
-
-export const httpLogger = morgan(morganFormat, {
-  stream: {
-    write: (message: string) => {
-      logger.http(message.trim());
-    },
-  },
-  // Skip health-check endpoints to avoid log noise
-  skip: (req: IncomingMessage) => {
-    const expressReq = req as unknown as Request;
-    return expressReq.path === '/health' || expressReq.path === '/ready';
-  },
-});
